@@ -8,7 +8,6 @@ import sys
 import tarfile
 import tempfile
 import shutil
-import cgi
 from socketserver import ThreadingMixIn
 
 # Default configuration
@@ -19,40 +18,73 @@ PKGDIR = "/var/cache/binpkgs"
 class ThreadingHTTPServer(ThreadingMixIn, http.server.HTTPServer):
     """Handle requests in a separate thread."""
 
+def parse_multipart(body: bytes, boundary: str):
+    """A simple multipart/form-data parser to work on Python 3.13+ (no cgi)."""
+    parts = body.split(boundary.encode('utf-8'))
+    form = {}
+    for part in parts:
+        if b'Content-Disposition: form-data;' not in part:
+            continue
+        
+        headers, content = part.split(b'\r\n\r\n', 1)
+        content = content.rstrip(b'\r\n--') # Clean up trailing boundary markers
+        
+        name_match = b'name="'
+        name_start = headers.find(name_match) + len(name_match)
+        name_end = headers.find(b'"' , name_start)
+        name = headers[name_start:name_end].decode('utf-8')
+        
+        # Store content and filename if present
+        filename_match = b'filename="'
+        if filename_match in headers:
+            fn_start = headers.find(filename_match) + len(filename_match)
+            fn_end = headers.find(b'"', fn_start)
+            filename = headers[fn_start:fn_end].decode('utf-8')
+            form[name] = {"filename": filename, "content": content}
+        else:
+            form[name] = {"content": content}
+    return form
+
 class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != '/build':
             self.send_error(404, "Not Found")
             return
 
-        # Create a temporary directory to store the client's config
         config_root = tempfile.mkdtemp(prefix="lantage-config-")
 
         try:
-            # Parse the multipart/form-data using the standard cgi module
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={'REQUEST_METHOD': 'POST',
-                         'CONTENT_TYPE': self.headers['Content-Type']}
-            )
+            content_length = int(self.headers['Content-Length'])
+            body = self.rfile.read(content_length)
+            
+            boundary = self.headers.get_boundary()
+            if not boundary:
+                self._send_response(400, {"error": "Invalid multipart/form-data request: no boundary"})
+                return
 
-            # Get the JSON job description
-            job_field = form['job']
-            job = json.loads(job_field.file.read())
+            form = parse_multipart(body, boundary)
+
+            job_data = form.get('job')
+            if not job_data:
+                self._send_response(400, {"error": "'job' field missing from request."})
+                return
+            
+            job = json.loads(job_data['content'])
             packages = job.get("packages")
 
-            # Get the config tarball and extract it
-            config_field = form['config']
-            with tarfile.open(fileobj=config_field.file, mode="r:gz") as tar:
-                tar.extractall(path=config_root)
+            config_data = form.get('config')
+            if not config_data:
+                self._send_response(400, {"error": "'config' field missing from request."})
+                return
+
+            with tempfile.NamedTemporaryFile() as tmp_tar:
+                tmp_tar.write(config_data['content'])
+                tmp_tar.seek(0)
+                with tarfile.open(fileobj=tmp_tar, mode="r:gz") as tar:
+                    tar.extractall(path=config_root)
             
             if not os.path.isdir(os.path.join(config_root, "portage")):
                 raise ValueError("Extracted tarball does not contain a 'portage' directory.")
-
-            if not packages or not isinstance(packages, list):
-                self._send_response(400, {"error": "Invalid payload. 'packages' list not found."})
-                return
 
             print(f"Received job to build {len(packages)} package(s) using client config.")
 

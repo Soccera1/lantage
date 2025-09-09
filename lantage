@@ -20,7 +20,9 @@ def parse_emerge_pretend_output(output: str) -> list[str]:
     Parses the output of 'emerge --pretend' to find package atoms.
     Example line: [ebuild  N     ] app-admin/example-1.2.3::gentoo
     """
-    package_atom_regex = re.compile(r"^\\[.+?\\]\\s+([\\w+/-]+-[\\d.]+.*?)[:\\s]")
+    # A more robust regex to find the package atom.
+    # It captures a block of non-whitespace/non-colon characters after the [..] block.
+    package_atom_regex = re.compile(r"^\[[^\]]+\]\s+([^\s:]+)")
     
     packages = []
     for line in output.splitlines():
@@ -110,6 +112,11 @@ def main():
         default=os.environ.get("LANTAGE_PORT", DEFAULT_PORT),
         help=f"The port for the lantaged server. Defaults to $LANTAGE_PORT or {DEFAULT_PORT}."
     )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose output to show stdout/stderr from emerge."
+    )
     
     args, emerge_args = parser.parse_known_args()
 
@@ -136,7 +143,16 @@ def main():
         print(e.stderr, file=sys.stderr)
         sys.exit(1)
 
-    packages_to_build = parse_emerge_pretend_output(result.stdout)
+    if args.verbose:
+        print("--- EMERGE STDOUT ---", file=sys.stderr)
+        print(result.stdout, file=sys.stderr)
+        print("--- EMERGE STDERR ---", file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        print("---------------------", file=sys.stderr)
+
+    # Combine stdout and stderr to handle cases where emerge prints to stderr
+    full_output = result.stdout + "\n" + result.stderr
+    packages_to_build = parse_emerge_pretend_output(full_output)
     
     if not packages_to_build:
         print("No new packages to build. Exiting.")
