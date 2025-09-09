@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import tarfile
+from urllib import request, error
+import mimetypes
+
+# Default configuration
+DEFAULT_PORT = 8473
+DEFAULT_HOST = "localhost"
+PORTAGE_CONFIG_PATH = "/etc/portage"
+
+def parse_emerge_pretend_output(output: str) -> list[str]:
+    """
+    Parses the output of 'emerge --pretend' to find package atoms.
+    Example line: [ebuild  N     ] app-admin/example-1.2.3::gentoo
+    """
+    package_atom_regex = re.compile(r"^\\[.+?\\]\\s+([\\w+/-]+-[\\d.]+.*?)[:\\s]")
+    
+    packages = []
+    for line in output.splitlines():
+        match = package_atom_regex.search(line)
+        if match:
+            packages.append(match.group(1))
+            
+    return sorted(list(set(packages)))
+
+def create_config_tarball() -> str:
+    """Creates a gzipped tarball of the /etc/portage directory."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp:
+        tarball_path = tmp.name
+    
+    print(f"-> Creating configuration tarball from {PORTAGE_CONFIG_PATH}...")
+    with tarfile.open(tarball_path, "w:gz") as tar:
+        tar.add(PORTAGE_CONFIG_PATH, arcname=os.path.basename(PORTAGE_CONFIG_PATH))
+        
+    return tarball_path
+
+def send_job_to_lantaged(host: str, port: int, packages: list[str], config_tarball_path: str):
+    """
+    Sends the list of packages and the config tarball to the lantaged server.
+    This uses multipart/form-data to send both JSON and a file.
+    """
+    url = f"http://{host}:{port}/build"
+    
+    # Create a multipart/form-data request
+    boundary = "----------" + os.urandom(16).hex()
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    
+    # JSON part
+    body = f"--{boundary}\r\n".encode('utf-8')
+    body += b'Content-Disposition: form-data; name="job"\r\n'
+    body += b"Content-Type: application/json\r\n\r\n"
+    body += json.dumps({"packages": packages}).encode('utf-8')
+    body += b"\r\n"
+    
+    # File part
+    body += f"--{boundary}\r\n".encode('utf-8')
+    body += f'Content-Disposition: form-data; name="config"; filename="{os.path.basename(config_tarball_path)}"\r\n'.encode('utf-8')
+    body += f"Content-Type: {mimetypes.guess_type(config_tarball_path)[0] or 'application/octet-stream'}\r\n\r\n".encode('utf-8')
+    
+    with open(config_tarball_path, 'rb') as f:
+        body += f.read()
+    
+    body += f"\r\n--{boundary}--\r\n".encode('utf-8')
+
+    print(f"-> Sending job for {len(packages)} package(s) to {url}")
+    
+    try:
+        req = request.Request(url, data=body, headers=headers, method="POST")
+        with request.urlopen(req, timeout=3600) as response:
+            if response.status != 200:
+                print(f"Error: Server returned status {response.status}", file=sys.stderr)
+                print(response.read().decode('utf-8'), file=sys.stderr)
+                return None
+            
+            print("<- Receiving binary packages from server...")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp_file:
+                tmp_file.write(response.read())
+                return tmp_file.name
+                
+    except error.URLError as e:
+        print(f"Error: Could not connect to lantaged at {url}. {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}", file=sys.stderr)
+        return None
+
+def main():
+    """
+    Main function to parse arguments and orchestrate the process.
+    """
+    parser = argparse.ArgumentParser(
+        description="A wrapper for Portage to offload compilation to a remote lantaged server.",
+        epilog="All arguments not recognized by this wrapper will be passed to 'emerge'."
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("LANTAGE_HOST", DEFAULT_HOST),
+        help=f"The IP address or hostname of the lantaged server. Defaults to $LANTAGE_HOST or '{DEFAULT_HOST}'."
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=os.environ.get("LANTAGE_PORT", DEFAULT_PORT),
+        help=f"The port for the lantaged server. Defaults to $LANTAGE_PORT or {DEFAULT_PORT}."
+    )
+    
+    args, emerge_args = parser.parse_known_args()
+
+    if not emerge_args or emerge_args[0] != "emerge":
+        print("Error: This script currently only wraps 'emerge'.", file=sys.stderr)
+        sys.exit(1)
+
+    pretend_args = ["emerge", "-p"] + emerge_args[1:]
+    
+    print(f"-> Running command: '{' '.join(pretend_args)}'")
+    
+    try:
+        result = subprocess.run(
+            pretend_args,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+    except FileNotFoundError:
+        print("Error: 'emerge' command not found. Is Portage installed and in your PATH?", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print("Error: 'emerge --pretend' failed:", file=sys.stderr)
+        print(e.stderr, file=sys.stderr)
+        sys.exit(1)
+
+    packages_to_build = parse_emerge_pretend_output(result.stdout)
+    
+    if not packages_to_build:
+        print("No new packages to build. Exiting.")
+        sys.exit(0)
+        
+    print(f"-> Found {len(packages_to_build)} packages to build:")
+    for pkg in packages_to_build:
+        print(f"  - {pkg}")
+
+    if not os.path.isdir(PORTAGE_CONFIG_PATH):
+        print(f"Error: Portage config directory not found at '{PORTAGE_CONFIG_PATH}'", file=sys.stderr)
+        sys.exit(1)
+
+    config_tarball = create_config_tarball()
+    
+    tarball_path = send_job_to_lantaged(args.host, args.port, packages_to_build, config_tarball)
+    
+    os.remove(config_tarball) # Clean up the local config tarball
+
+    if tarball_path:
+        print("\nSuccess! Binary packages received.")
+        print(f"Tarball saved to: {tarball_path}")
+        print("\nTo install the packages, first unpack the binaries:")
+        print(f"  # tar -xvf {tarball_path} -C /var/cache/binpkgs/")
+        print("\nThen, run emerge to install them from the local binhost:")
+        print(f"  # emerge --usepkg --binpkg-respect-use=y -k {' '.join(emerge_args[1:])}")
+
+if __name__ == "__main__":
+    main()
