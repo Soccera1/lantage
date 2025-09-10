@@ -18,6 +18,9 @@ PKGDIR = "/var/cache/binpkgs"
 
 class ThreadingHTTPServer(ThreadingMixIn, http.server.HTTPServer):
     """Handle requests in a separate thread."""
+    def __init__(self, server_address, HandlerClass, args):
+        super().__init__(server_address, HandlerClass)
+        self.args = args
 
 def parse_multipart(body: bytes, boundary: str):
     """A simple multipart/form-data parser to work on Python 3.13+ (no cgi)."""
@@ -67,7 +70,7 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
 
             job_data = form.get('job')
             if not job_data:
-                self._send_response(400, {"error": "'job' field missing from request."})
+                self._send_response(400, {"error": "'job' field missing from request."} )
                 return
             
             job = json.loads(job_data['content'])
@@ -75,7 +78,7 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
 
             config_data = form.get('config')
             if not config_data:
-                self._send_response(400, {"error": "'config' field missing from request."})
+                self._send_response(400, {"error": "'config' field missing from request."} )
                 return
 
             with tempfile.NamedTemporaryFile() as tmp_tar:
@@ -108,14 +111,14 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
 
             print(f"Received job to build {len(packages)} package(s) using client config.")
 
-            failed_packages, built_package_files = self._build_packages(packages, config_root)
+            failed_packages, built_package_files = self._build_packages(packages, config_root, self.server.args.verbose)
 
             if failed_packages:
                 self._send_response(500, {"error": "Build failed", "details": failed_packages})
                 return
 
             if not built_package_files:
-                self._send_response(404, {"error": "No binary packages were successfully built."})
+                self._send_response(404, {"error": "No binary packages were successfully built."} )
                 return
 
             self._send_tarball(built_package_files)
@@ -126,7 +129,7 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
         finally:
             shutil.rmtree(config_root)
 
-    def _build_packages(self, packages, config_root):
+    def _build_packages(self, packages, config_root, verbose):
         failed_packages = []
         built_package_files = []
         build_env = os.environ.copy()
@@ -146,15 +149,19 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                     # This handles cases like 'x11-terms/alacritty-0.15.1' -> 'x11-terms/alacritty'
                     # and 'dev-lang/python' -> 'dev-lang/python'
                     package_name_only = re.sub(r'-[0-9].*$', '', pkg)
+                    emerge_command = ["emerge", "--buildpkgonly"]
+                    if verbose:
+                        emerge_command.append("--verbose")
+                    emerge_command.append(package_name_only)
                     subprocess.run(
-                        ["emerge", "--buildpkgonly", package_name_only],
+                        emerge_command,
                         check=True, capture_output=True, text=True, env=build_env
                     )
                     pkg_path = self._find_package_file(pkg)
                     if pkg_path:
                         built_package_files.append(pkg_path)
                     else:
-                        failed_packages.append({"package": pkg, "error": "Binary not found after build."})
+                        failed_packages.append({"package": pkg, "error": "Binary not found after build."} )
                 except subprocess.CalledProcessError as e:
                     print(f"Failed to build {pkg}:\n{e.stderr}", file=sys.stderr)
                     failed_packages.append({"package": pkg, "error": e.stderr})
@@ -203,6 +210,7 @@ def main():
     parser = argparse.ArgumentParser(description="Lantage daemon to build packages remotely.")
     parser.add_argument("--host", default=DEFAULT_HOST, help=f"Hostname or IP to listen on (default: {DEFAULT_HOST})")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port to listen on (default: {DEFAULT_PORT})")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output for emerge commands.")
     args = parser.parse_args()
 
     if os.geteuid() != 0:
@@ -210,7 +218,7 @@ def main():
         sys.exit(1)
 
     server_address = (args.host, args.port)
-    httpd = ThreadingHTTPServer(server_address, PortageBuildHandler)
+    httpd = ThreadingHTTPServer(server_address, PortageBuildHandler, args)
     print(f"Starting lantaged on {args.host}:{args.port}...")
     print("Server is running and waiting for build requests.")
     try:
