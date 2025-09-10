@@ -179,6 +179,7 @@ def main():
     server_address = (args.host, args.port)
     httpd = ThreadingHTTPServer(server_address, PortageBuildHandler)
     print(f"Starting lantaged on {args.host}:{args.port}...")
+    print("Server is running and waiting for build requests.")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
