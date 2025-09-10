@@ -82,6 +82,25 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                 tmp_tar.seek(0)
                 with tarfile.open(fileobj=tmp_tar, mode="r:gz") as tar:
                     tar.extractall(path=config_root)
+
+            # Ensure make.profile is a symlink, respecting client's choice
+            make_profile_path = os.path.join(config_root, "etc", "portage", "make.profile")
+            
+            if os.path.exists(make_profile_path) and not os.path.islink(make_profile_path):
+                # Read the content of the client's make.profile (which is the target path)
+                with open(make_profile_path, 'r') as f:
+                    target_profile_content = f.read().strip()
+                
+                os.remove(make_profile_path) # Remove the invalid regular file
+                os.makedirs(os.path.dirname(make_profile_path), exist_ok=True)
+                # Create a symlink using the content of the original file as the target
+                # os.path.normpath will resolve paths like "../../gentoo:default/linux/amd64/17.0"
+                # relative to the symlink's location.
+                os.symlink(target_profile_content, make_profile_path)
+            elif not os.path.exists(make_profile_path):
+                # If make.profile doesn't exist, create a default symlink
+                os.makedirs(os.path.dirname(make_profile_path), exist_ok=True)
+                os.symlink("/var/db/repos/gentoo/profiles/default/linux/amd64/23.0", make_profile_path)
             
             if not os.path.isdir(os.path.join(config_root, "portage")):
                 raise ValueError("Extracted tarball does not contain a 'portage' directory.")
