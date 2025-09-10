@@ -132,26 +132,34 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
         build_env = os.environ.copy()
         build_env["PORTAGE_CONFIGROOT"] = config_root
         build_env["PORTAGE_REPOS_OVERLAY"] = os.path.join(config_root, "etc", "portage", "repos.conf")
+        build_env["PORTAGE_OVERLAY"] = "" # Explicitly clear to prevent host overlays from interfering
 
-        for pkg in packages:
-            print(f"Building: {pkg}")
-            try:
-                # Extract the package name without the version
-                # This handles cases like 'x11-terms/alacritty-0.15.1' -> 'x11-terms/alacritty'
-                # and 'dev-lang/python' -> 'dev-lang/python'
-                package_name_only = re.sub(r'-[0-9].*$', '', pkg)
-                subprocess.run(
-                    ["emerge", "--buildpkgonly", package_name_only],
-                    check=True, capture_output=True, text=True, env=build_env
-                )
-                pkg_path = self._find_package_file(pkg)
-                if pkg_path:
-                    built_package_files.append(pkg_path)
-                else:
-                    failed_packages.append({"package": pkg, "error": "Binary not found after build."})
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to build {pkg}:\n{e.stderr}", file=sys.stderr)
-                failed_packages.append({"package": pkg, "error": e.stderr})
+        # Create a temporary directory to serve as the ROOT for emerge, isolating it from the host's /var/db/pkg
+        temp_root = tempfile.mkdtemp(prefix="lantage-root-")
+        build_env["ROOT"] = temp_root
+
+        try:
+            for pkg in packages:
+                print(f"Building: {pkg}")
+                try:
+                    # Extract the package name without the version
+                    # This handles cases like 'x11-terms/alacritty-0.15.1' -> 'x11-terms/alacritty'
+                    # and 'dev-lang/python' -> 'dev-lang/python'
+                    package_name_only = re.sub(r'-[0-9].*$', '', pkg)
+                    subprocess.run(
+                        ["emerge", "--buildpkgonly", package_name_only],
+                        check=True, capture_output=True, text=True, env=build_env
+                    )
+                    pkg_path = self._find_package_file(pkg)
+                    if pkg_path:
+                        built_package_files.append(pkg_path)
+                    else:
+                        failed_packages.append({"package": pkg, "error": "Binary not found after build."})
+                except subprocess.CalledProcessError as e:
+                    print(f"Failed to build {pkg}:\n{e.stderr}", file=sys.stderr)
+                    failed_packages.append({"package": pkg, "error": e.stderr})
+        finally:
+            shutil.rmtree(temp_root)
         return failed_packages, built_package_files
 
     def _send_tarball(self, file_paths):
