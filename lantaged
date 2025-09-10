@@ -93,18 +93,25 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                 for filename in filenames:
                     os.chmod(os.path.join(dirpath, filename), 0o644) # Files should be readable/writable by owner, readable by others
 
+            print(f"DEBUG: config_root: {config_root}")
             # Define paths for where Portage expects make.profile and where client might provide it
             portage_expected_make_profile_path = os.path.join(config_root, "portage", "make.profile")
             client_provided_make_profile_path = os.path.join(config_root, "etc", "portage", "make.profile")
 
+            print(f"DEBUG: client_provided_make_profile_path: {client_provided_make_profile_path}")
+            print(f"DEBUG: os.path.exists(client_provided_make_profile_path): {os.path.exists(client_provided_make_profile_path)}")
+
             # Ensure the directory for the expected symlink exists
             os.makedirs(os.path.dirname(portage_expected_make_profile_path), exist_ok=True)
+            print(f"DEBUG: portage_expected_make_profile_path directory exists: {os.path.isdir(os.path.dirname(portage_expected_make_profile_path))}")
 
             # Remove any existing entry at the expected symlink path
             if os.path.islink(portage_expected_make_profile_path):
+                print(f"DEBUG: Removing existing symlink at {portage_expected_make_profile_path}")
                 os.remove(portage_expected_make_profile_path)
             elif os.path.exists(portage_expected_make_profile_path):
                 # If it's a directory or regular file, remove it
+                print(f"DEBUG: Removing existing file/directory at {portage_expected_make_profile_path}")
                 if os.path.isdir(portage_expected_make_profile_path):
                     shutil.rmtree(portage_expected_make_profile_path)
                 else:
@@ -113,11 +120,18 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
             # Create the symlink
             if os.path.exists(client_provided_make_profile_path):
                 # If client provided a make.profile, symlink Portage's expected path to it
+                print(f"DEBUG: Creating symlink from {client_provided_make_profile_path} to {portage_expected_make_profile_path}")
                 os.symlink(client_provided_make_profile_path, portage_expected_make_profile_path)
             else:
                 # If client did not provide a make.profile, create a default symlink
-                os.symlink("/var/db/repos/gentoo/profiles/default/linux/amd64/23.0", portage_expected_make_profile_path)
+                default_profile_path = "/var/db/repos/gentoo/profiles/default/linux/amd64/23.0"
+                print(f"DEBUG: Creating default symlink from {default_profile_path} to {portage_expected_make_profile_path}")
+                os.symlink(default_profile_path, portage_expected_make_profile_path)
             
+            print(f"DEBUG: Symlink created. os.path.exists(portage_expected_make_profile_path): {os.path.exists(portage_expected_make_profile_path)}")
+            print(f"DEBUG: os.path.islink(portage_expected_make_profile_path): {os.path.islink(portage_expected_make_profile_path)}")
+            print(f"DEBUG: os.path.realpath(portage_expected_make_profile_path): {os.path.realpath(portage_expected_make_profile_path)}")
+
             print(f"Received job to build {len(packages)} package(s) using client config.")
 
             failed_packages, built_package_files = self._build_packages(packages, config_root, self.server.args.verbose)
