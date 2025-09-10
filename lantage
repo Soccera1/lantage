@@ -39,8 +39,24 @@ def create_config_tarball() -> str:
     
     print(f"-> Creating configuration tarball from {PORTAGE_CONFIG_PATH}...")
     with tarfile.open(tarball_path, "w:gz") as tar:
-        tar.add(PORTAGE_CONFIG_PATH, arcname=os.path.basename(PORTAGE_CONFIG_PATH))
-        
+        # Add the contents of /etc/portage, but handle make.profile separately
+        for item in os.listdir(PORTAGE_CONFIG_PATH):
+            path = os.path.join(PORTAGE_CONFIG_PATH, item)
+            arcname = os.path.join('portage', item)
+            
+            if item == 'make.profile':
+                if os.path.islink(path):
+                    # If make.profile is a symlink, add it as such
+                    info = tarfile.TarInfo(name=arcname)
+                    info.type = tarfile.SYMTYPE
+                    info.linkname = os.readlink(path)
+                    tar.addfile(info)
+                else:
+                    # Otherwise, add it as a normal file/directory
+                    tar.add(path, arcname=arcname)
+            else:
+                tar.add(path, arcname=arcname)
+                
     return tarball_path
 
 def send_job_to_lantaged(host: str, port: int, packages: list[str], config_tarball_path: str):
