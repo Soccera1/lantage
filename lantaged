@@ -87,6 +87,12 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                 with tarfile.open(fileobj=tmp_tar, mode="r:gz") as tar:
                     tar.extractall(path=config_root)
 
+            # Ensure correct permissions for extracted config files
+            for dirpath, dirnames, filenames in os.walk(config_root):
+                os.chmod(dirpath, 0o755) # Directories should be readable, writable, executable by owner, readable/executable by others
+                for filename in filenames:
+                    os.chmod(os.path.join(dirpath, filename), 0o644) # Files should be readable/writable by owner, readable by others
+
             # Ensure make.profile is a symlink, respecting client's choice
             make_profile_path = os.path.join(config_root, "etc", "portage", "make.profile")
             
