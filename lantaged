@@ -139,6 +139,152 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                 # This handles cases like 'x11-terms/alacritty-0.15.1' -> 'x11-terms/alacritty'
                 # and 'dev-lang/python' -> 'dev-lang/python'
                 package_name_only = re.sub(r'-[0-9].*
+                pkg_path = self._find_package_file(pkg)
+                if pkg_path:
+                    built_package_files.append(pkg_path)
+                else:
+                    failed_packages.append({"package": pkg, "error": "Binary not found after build."})
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to build {pkg}:\n{e.stderr}", file=sys.stderr)
+                failed_packages.append({"package": pkg, "error": e.stderr})
+        return failed_packages, built_package_files
+
+    def _send_tarball(self, file_paths):
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp:
+            tarball_path = tmp.name
+        
+        try:
+            with tarfile.open(tarball_path, "w:gz") as tar:
+                for f_path in file_paths:
+                    tar.add(f_path, arcname=os.path.basename(f_path))
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/gzip")
+            with open(tarball_path, 'rb') as f:
+                fs = os.fstat(f.fileno())
+                self.send_header("Content-Length", str(fs.st_size))
+                self.end_headers()
+                self.wfile.write(f.read())
+        finally:
+            os.remove(tarball_path)
+
+    def _find_package_file(self, package_atom: str) -> str | None:
+        try:
+            category, pkgname_version = package_atom.split('/')
+            pkg_dir = os.path.join(PKGDIR, category)
+            if not os.path.isdir(pkg_dir):
+                return None
+            for f in os.listdir(pkg_dir):
+                if f.startswith(pkgname_version) and (f.endswith(".tbz2") or f.endswith(".xpak")):
+                    return os.path.join(pkg_dir, f)
+        except ValueError: return None
+        return None
+
+    def _send_response(self, status_code: int, data: dict):
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode('utf-8'))
+
+def main():
+    parser = argparse.ArgumentParser(description="Lantage daemon to build packages remotely.")
+    parser.add_argument("--host", default=DEFAULT_HOST, help=f"Hostname or IP to listen on (default: {DEFAULT_HOST})")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port to listen on (default: {DEFAULT_PORT})")
+    args = parser.parse_args()
+
+    if os.geteuid() != 0:
+        print("Error: This daemon requires root privileges to run 'emerge'.\nPlease run as root, for example: # ./lantaged", file=sys.stderr)
+        sys.exit(1)
+
+    server_address = (args.host, args.port)
+    httpd = ThreadingHTTPServer(server_address, PortageBuildHandler)
+    print(f"Starting lantaged on {args.host}:{args.port}...")
+    print("Server is running and waiting for build requests.")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down server.")
+        httpd.server_close()
+
+if __name__ == "__main__":
+    main()
+, '', pkg)
+                subprocess.run(
+                    ["emerge", "--buildpkgonly", package_name_only],
+                    check=True, capture_output=True, text=True, env=build_env
+                )
+                pkg_path = self._find_package_file(pkg)
+                if pkg_path:
+                    built_package_files.append(pkg_path)
+                else:
+                    failed_packages.append({"package": pkg, "error": "Binary not found after build."})
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to build {pkg}:\n{e.stderr}", file=sys.stderr)
+                failed_packages.append({"package": pkg, "error": e.stderr})
+        return failed_packages, built_package_files
+
+    def _send_tarball(self, file_paths):
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp:
+            tarball_path = tmp.name
+        
+        try:
+            with tarfile.open(tarball_path, "w:gz") as tar:
+                for f_path in file_paths:
+                    tar.add(f_path, arcname=os.path.basename(f_path))
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/gzip")
+            with open(tarball_path, 'rb') as f:
+                fs = os.fstat(f.fileno())
+                self.send_header("Content-Length", str(fs.st_size))
+                self.end_headers()
+                self.wfile.write(f.read())
+        finally:
+            os.remove(tarball_path)
+
+    def _find_package_file(self, package_atom: str) -> str | None:
+        try:
+            category, pkgname_version = package_atom.split('/')
+            pkg_dir = os.path.join(PKGDIR, category)
+            if not os.path.isdir(pkg_dir):
+                return None
+            for f in os.listdir(pkg_dir):
+                if f.startswith(pkgname_version) and (f.endswith(".tbz2") or f.endswith(".xpak")):
+                    return os.path.join(pkg_dir, f)
+        except ValueError: return None
+        return None
+
+    def _send_response(self, status_code: int, data: dict):
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode('utf-8'))
+
+def main():
+    parser = argparse.ArgumentParser(description="Lantage daemon to build packages remotely.")
+    parser.add_argument("--host", default=DEFAULT_HOST, help=f"Hostname or IP to listen on (default: {DEFAULT_HOST})")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port to listen on (default: {DEFAULT_PORT})")
+    args = parser.parse_args()
+
+    if os.geteuid() != 0:
+        print("Error: This daemon requires root privileges to run 'emerge'.\nPlease run as root, for example: # ./lantaged", file=sys.stderr)
+        sys.exit(1)
+
+    server_address = (args.host, args.port)
+    httpd = ThreadingHTTPServer(server_address, PortageBuildHandler)
+    print(f"Starting lantaged on {args.host}:{args.port}...")
+    print("Server is running and waiting for build requests.")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down server.")
+        httpd.server_close()
+
+if __name__ == "__main__":
+    main()
+, '', pkg)
+                subprocess.run(
+                    ["emerge", "--buildpkgonly", package_name_only],
                     check=True, capture_output=True, text=True, env=build_env
                 )
                 pkg_path = self._find_package_file(pkg)
