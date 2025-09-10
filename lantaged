@@ -131,6 +131,7 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
         built_package_files = []
         build_env = os.environ.copy()
         build_env["PORTAGE_CONFIGROOT"] = config_root
+        build_env["PORTAGE_REPOS_OVERLAY"] = os.path.join(config_root, "etc", "portage", "repos.conf")
 
         for pkg in packages:
             print(f"Building: {pkg}")
