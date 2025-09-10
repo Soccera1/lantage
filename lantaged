@@ -163,8 +163,8 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                     else:
                         failed_packages.append({"package": pkg, "error": "Binary not found after build."} )
                 except subprocess.CalledProcessError as e:
-                    print(f"Failed to build {pkg}:\n{e.stderr}", file=sys.stderr)
-                    failed_packages.append({"package": pkg, "error": e.stderr})
+                    print(f"Failed to build {pkg}:\nStdout:\n{e.stdout}\nStderr:\n{e.stderr}", file=sys.stderr)
+                    failed_packages.append({"package": pkg, "error": f"Stdout:\n{e.stdout}\nStderr:\n{e.stderr}"})
         finally:
             shutil.rmtree(temp_root)
         return failed_packages, built_package_files
