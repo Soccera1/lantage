@@ -123,10 +123,16 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                 print(f"DEBUG: Creating symlink from {client_provided_make_profile_path} to {portage_expected_make_profile_path}")
                 os.symlink(client_provided_make_profile_path, portage_expected_make_profile_path)
             else:
-                # If client did not provide a make.profile, create a default symlink
-                default_profile_path = "/var/db/repos/gentoo/profiles/default/linux/amd64/23.0"
-                print(f"DEBUG: Creating default symlink from {default_profile_path} to {portage_expected_make_profile_path}")
-                os.symlink(default_profile_path, portage_expected_make_profile_path)
+                # If client did not provide a make.profile, copy the default profile into config_root
+                default_profile_source = "/var/db/repos/gentoo/profiles/default/linux/amd64/23.0"
+                default_profile_dest = os.path.join(config_root, "portage", "profiles", "default", "linux", "amd64", "23.0")
+                
+                os.makedirs(os.path.dirname(default_profile_dest), exist_ok=True)
+                shutil.copytree(default_profile_source, default_profile_dest, dirs_exist_ok=True)
+                
+                print(f"DEBUG: Copied default profile from {default_profile_source} to {default_profile_dest}")
+                print(f"DEBUG: Creating symlink from {default_profile_dest} to {portage_expected_make_profile_path}")
+                os.symlink(default_profile_dest, portage_expected_make_profile_path)
             
             print(f"DEBUG: Symlink created. os.path.exists(portage_expected_make_profile_path): {os.path.exists(portage_expected_make_profile_path)}")
             print(f"DEBUG: os.path.islink(portage_expected_make_profile_path): {os.path.islink(portage_expected_make_profile_path)}")
