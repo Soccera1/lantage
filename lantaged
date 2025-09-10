@@ -94,7 +94,7 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                     os.chmod(os.path.join(dirpath, filename), 0o644) # Files should be readable/writable by owner, readable by others
 
             # Ensure make.profile is a symlink, respecting client's choice
-            make_profile_path = os.path.join(config_root, "etc", "portage", "make.profile")
+            make_profile_path = os.path.join(config_root, "portage", "make.profile")
             
             if os.path.exists(make_profile_path) and not os.path.islink(make_profile_path):
                 # Read the content of the client's make.profile (which is the target path)
@@ -112,9 +112,6 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                 os.makedirs(os.path.dirname(make_profile_path), exist_ok=True)
                 os.symlink("/var/db/repos/gentoo/profiles/default/linux/amd64/23.0", make_profile_path)
             
-            if not os.path.isdir(os.path.join(config_root, "portage")):
-                raise ValueError("Extracted tarball does not contain a 'portage' directory.")
-
             print(f"Received job to build {len(packages)} package(s) using client config.")
 
             failed_packages, built_package_files = self._build_packages(packages, config_root, self.server.args.verbose)
