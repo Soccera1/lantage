@@ -93,25 +93,28 @@ class PortageBuildHandler(http.server.BaseHTTPRequestHandler):
                 for filename in filenames:
                     os.chmod(os.path.join(dirpath, filename), 0o644) # Files should be readable/writable by owner, readable by others
 
-            # Ensure make.profile is a symlink, respecting client's choice
-            make_profile_path = os.path.join(config_root, "portage", "make.profile")
-            
-            if os.path.exists(make_profile_path) and not os.path.islink(make_profile_path):
-                # Read the content of the client's make.profile (which is the target path)
-                with open(make_profile_path, 'r') as f:
-                    target_profile_content = f.read().strip()
-                
-                os.remove(make_profile_path) # Remove the invalid regular file
-                os.makedirs(os.path.dirname(make_profile_path), exist_ok=True)
-                # Create a symlink using the content of the original file as the target
-                # os.path.normpath will resolve paths like "../../gentoo:default/linux/amd64/17.0"
-                # relative to the symlink's location.
-                os.symlink(target_profile_content, make_profile_path)
-            elif not os.path.exists(make_profile_path):
-                # If make.profile doesn't exist, create a default symlink
-                os.makedirs(os.path.dirname(make_profile_path), exist_ok=True)
-                os.symlink("/var/db/repos/gentoo/profiles/default/linux/amd64/23.0", make_profile_path)
-            
+            # Determine paths for client's make.profile and where Portage expects it
+            client_make_profile_path = os.path.join(config_root, "etc", "portage", "make.profile")
+            portage_expected_make_profile_path = os.path.join(config_root, "portage", "make.profile")
+
+            # Ensure the directory for the expected symlink exists
+            os.makedirs(os.path.dirname(portage_expected_make_profile_path), exist_ok=True)
+
+            if os.path.exists(client_make_profile_path):
+                # If client provided a make.profile, symlink Portage's expected path to it
+                if os.path.islink(portage_expected_make_profile_path):
+                    os.remove(portage_expected_make_profile_path)
+                elif os.path.exists(portage_expected_make_profile_path):
+                    shutil.rmtree(portage_expected_make_profile_path) # Remove if it's a directory or regular file
+                os.symlink(client_make_profile_path, portage_expected_make_profile_path)
+            else:
+                # If client did not provide a make.profile, create a default symlink
+                if os.path.islink(portage_expected_make_profile_path):
+                    os.remove(portage_expected_make_profile_path)
+                elif os.path.exists(portage_expected_make_profile_path):
+                    shutil.rmtree(portage_expected_make_profile_path) # Remove if it's a directory or regular file
+                os.symlink("/var/db/repos/gentoo/profiles/default/linux/amd64/23.0", portage_expected_make_profile_path)
+
             print(f"Received job to build {len(packages)} package(s) using client config.")
 
             failed_packages, built_package_files = self._build_packages(packages, config_root, self.server.args.verbose)
